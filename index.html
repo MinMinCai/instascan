@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Code 掃描器</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      /* 將內容對齊到頂部 */
+      min-height: 100vh;
+    }
+
+    h1 {
+      color: #333;
+      margin-top: 20px;
+      /* 增加標題與頂部的間距 */
+    }
+
+    #camera-container {
+      position: relative;
+      margin-top: 30px;
+      /* 增加相機容器與標題的間距 */
+    }
+
+    #camera-preview {
+      width: 320px;
+      height: 240px;
+      border: 2px solid #666;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: block;
+      /* 確保 video 元素是塊級元素 */
+    }
+
+    #result {
+      font-size: 18px;
+      color: #222;
+      background-color: #fff;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      margin-top: 20px;
+      /* 增加結果顯示區域與相機預覽的間距 */
+      text-align: center;
+      /* 確保結果文字居中 */
+      max-width: 80%;
+      /* 限制結果顯示區域的最大寬度 */
+      box-sizing: border-box;
+      /* 包含 padding 和 border 在寬度內 */
+      word-wrap: break-word;
+      /* 長結果文字換行 */
+    }
+
+    #controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 20px;
+      /* 增加控制區域與結果顯示區域的間距 */
+    }
+
+    #start-scan,
+    #stop-scan {
+      padding: 10px 20px;
+      font-size: 16px;
+      color: white;
+      background-color: #4CAF50;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 5px 0;
+      transition: background-color 0.3s ease;
+    }
+
+    #start-scan:hover,
+    #stop-scan:hover {
+      background-color: #367c39;
+    }
+
+    #stop-scan {
+      background-color: #f44336;
+    }
+
+    #stop-scan:hover {
+      background-color: #d32f2f;
+    }
+
+    #camera-select {
+      margin-top: 20px;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+
+    #message-box {
+      position: fixed;
+      /* 使用固定定位，確保它在視窗中的位置 */
+      top: 20px;
+      /* 距離視窗頂部的距離 */
+      left: 50%;
+      /* 初始水平位置在視窗中央 */
+      transform: translateX(-50%);
+      /* 真正的水平居中 */
+      background-color: rgba(255, 0, 0, 0.8);
+      /* 半透明紅色背景 */
+      color: white;
+      padding: 15px 20px;
+      border-radius: 5px;
+      font-size: 16px;
+      z-index: 1000;
+      /* 確保它在其他元素之上 */
+      opacity: 0;
+      /* 初始時完全透明 */
+      transition: opacity 0.5s ease-in-out, top 0.5s ease-in-out;
+      /* 平滑過渡 */
+      white-space: nowrap;
+      /* 防止文字換行，保持單行 */
+    }
+
+    #message-box.show {
+      opacity: 1;
+      /* 顯示消息 */
+      top: 30px;
+      /* 稍微向下移動，使其更明顯 */
+    }
+
+    #message-box.hide {
+      opacity: 0;
+      /* 隱藏消息 */
+      top: 20px;
+      /* 恢復到初始位置 */
+    }
+  </style>
+</head>
+
+<body>
+  <h1>QR Code 掃描器</h1>
+
+  <div id="camera-container">
+    <video id="camera-preview" autoplay playsinline></video>
+  </div>
+
+  <div id="controls">
+    <select id="camera-select"></select>
+    <button id="start-scan">開始掃描</button>
+    <button id="stop-scan">停止掃描</button>
+  </div>
+
+  <div id="result"></div>
+  <div id="message-box" class="hide"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script>
+    const videoElement = document.getElementById('camera-preview');
+    const canvasElement = document.createElement('canvas');
+    const canvasContext = canvasElement.getContext('2d');
+    const resultElement = document.getElementById('result');
+    const startScanButton = document.getElementById('start-scan');
+    const stopScanButton = document.getElementById('stop-scan');
+    const cameraSelect = document.getElementById('camera-select');
+    const messageBox = document.getElementById('message-box');
+
+    let scanning = false;
+    let stream = null;
+    let selectedDeviceId = null;
+
+    function showMessage(message, duration = 3000) {
+      messageBox.textContent = message;
+      messageBox.classList.remove('hide');
+      messageBox.classList.add('show');
+
+      setTimeout(() => {
+        messageBox.classList.remove('show');
+        messageBox.classList.add('hide');
+      }, duration);
+    }
+
+
+    function getCameraStream(deviceId = null) {
+      const constraints = {
+        video: {
+          facingMode: 'environment',
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        },
+      };
+
+      return navigator.mediaDevices.getUserMedia(constraints);
+    }
+
+    function startScan() {
+      if (!scanning) {
+        scanning = true;
+        startScanButton.textContent = '掃描中...';
+        stopScanButton.disabled = false;
+        cameraSelect.disabled = true;
+        resultElement.innerText = ''; // 清空上次的結果
+        requestAnimationFrame(scanQRCode);
+      }
+    }
+
+    function stopScan() {
+      if (scanning) {
+        scanning = false;
+        startScanButton.textContent = '開始掃描';
+        stopScanButton.disabled = true;
+        cameraSelect.disabled = false;
+        if (stream) {
+          stream.getTracks().forEach((track) => track.stop());
+          videoElement.srcObject = null;
+          stream = null;
+        }
+      }
+    }
+
+
+    function scanQRCode() {
+      if (!scanning) return;
+
+      if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
+        canvasElement.height = videoElement.videoHeight;
+        canvasElement.width = videoElement.videoWidth;
+        canvasContext.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+        const imageData = canvasContext.getImageData(0, 0, canvasElement.width, canvasElement.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert',
+        });
+
+        if (code) {
+          console.log('掃描到 QR code：', code.data);
+          resultElement.innerText = `掃描結果：${code.data}`;
+          stopScan(); // 掃描成功後停止掃描
+          // 在這裡處理掃描到的 QR code 數據，例如顯示結果或導向其他頁面
+        } else {
+          requestAnimationFrame(scanQRCode); // 繼續掃描
+        }
+      } else {
+        requestAnimationFrame(scanQRCode); // 稍後再試
+      }
+    }
+
+    navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => {
+        const videoDevices = devices.filter((device) => device.kind === 'videoinput');
+        if (videoDevices.length === 0) {
+          showMessage('未找到相機設備，請確認相機是否連接並授權使用。');
+          startScanButton.disabled = true;
+          return;
+        }
+
+        videoDevices.forEach((device) => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.textContent = device.label || `Camera ${cameraSelect.options.length + 1}`;
+          cameraSelect.appendChild(option);
+        });
+
+        // 預設選擇第一個相機
+        if (videoDevices.length > 0) {
+          selectedDeviceId = videoDevices[0].deviceId;
+          cameraSelect.value = selectedDeviceId; //select the first camera
+          getCameraStream(selectedDeviceId)
+            .then((s) => {
+              stream = s;
+              videoElement.srcObject = s;
+              videoElement.onloadedmetadata = () => {
+                videoElement.play();
+                startScanButton.disabled = false;
+              };
+            })
+            .catch((err) => {
+              console.error('Error accessing camera:', err);
+              showMessage(`無法存取相機：${err.message}`);
+              startScanButton.disabled = true;
+            });
+        }
+      })
+      .catch((err) => {
+        console.error('Error enumerating devices:', err);
+        showMessage(`無法取得相機列表：${err.message}`);
+        startScanButton.disabled = true;
+      });
+
+
+
+    cameraSelect.addEventListener('change', (event) => {
+      selectedDeviceId = event.target.value;
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        videoElement.srcObject = null;
+      }
+      getCameraStream(selectedDeviceId)
+        .then((s) => {
+          stream = s;
+          videoElement.srcObject = s;
+          videoElement.onloadedmetadata = () => {
+            videoElement.play();
+            startScanButton.disabled = false;
+          };
+        })
+        .catch((err) => {
+          console.error('Error accessing camera:', err);
+          showMessage(`無法存取相機：${err.message}`);
+          startScanButton.disabled = true;
+        });
+    });
+
+    startScanButton.addEventListener('click', startScan);
+    stopScanButton.addEventListener('click', stopScan);
+    stopScanButton.disabled = true; // 初始化時禁用停止按鈕
+  </script>
+</body>
+
+</html>
